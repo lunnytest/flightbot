@@ -2,7 +2,7 @@ name: Bilet kontrolu
 
 on:
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 # Workflow token'ini salt-okunur yap: repo public oldugu icin

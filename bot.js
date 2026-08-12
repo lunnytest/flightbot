@@ -62,6 +62,35 @@ function flightKey(f) {
   return [f.search, f.date, f.airline, f.depTime, f.arrTime, f.stops].join('|');
 }
 
+/**
+ * Aynı uçuş hem Google'dan hem Skiplagged'den gelebiliyor. Özet listesinde
+ * aynı seferi iki kez göstermemek için tekilleştirip en ucuzunu tutuyoruz.
+ */
+function dedupeAcrossProviders(flights) {
+  const byKey = new Map();
+  for (const f of flights) {
+    const key = [f.search, f.date, f.depTime, f.arrTime, f.stops].join('|');
+    const prev = byKey.get(key);
+    if (!prev || f.priceTRY < prev.priceTRY) byKey.set(key, f);
+  }
+  return [...byKey.values()].sort((a, b) => a.priceTRY - b.priceTRY);
+}
+
+/**
+ * Aynı tarife onlarca aktarma varyantıyla geliyor (aynı gün, aynı havayolu,
+ * aynı fiyat, sadece bekleme süresi farklı). Özette 5 slotun 5'ini tek bir
+ * tarifeye harcamamak için bunları teke indirip en kısa süreliyi tutuyoruz.
+ */
+function distinctOffers(sorted) {
+  const seen = new Map();
+  for (const f of sorted) {
+    const key = [f.search, f.date, f.airline, f.priceTRY].join('|');
+    const prev = seen.get(key);
+    if (!prev || (f.durationMin || 1e9) < (prev.durationMin || 1e9)) seen.set(key, f);
+  }
+  return [...seen.values()].sort((a, b) => a.priceTRY - b.priceTRY);
+}
+
 function fmtFlight(f) {
   const plus = f.plusDays ? `+${f.plusDays}` : '';
   const t = f.depTime ? `${f.depTime}→${f.arrTime}${plus}` : '(saat okunamadı)';
@@ -127,6 +156,63 @@ async function sendDiscord(deals, searchByLabelDate) {
     else log(`>> Discord'a ${deals.length} bilet gönderildi.`);
   } catch (e) {
     log(`!! Discord gönderilemedi: ${e.message}`);
+  }
+}
+
+/** Her turda gonderilen duzenli ozet: en ucuz N bilet + rota basina durum. */
+async function sendDigest(top, allUniq, searchByLabelDate) {
+  const cfg = CONFIG.digest || {};
+  if (process.argv.includes('--dry-run')) {
+    log(`>> [dry-run] özet GÖNDERİLMEDİ (${top.length} bilet).`);
+    top.forEach((f, i) => log(`   ${i + 1}. ${fmtFlight(f)}`));
+    return;
+  }
+  if (!WEBHOOK) { log('!! Webhook yok, özet atlanıyor.'); return; }
+
+  const fields = top.map((f, i) => {
+    const plus = f.plusDays ? `+${f.plusDays}` : '';
+    const link = googleLink(f, searchByLabelDate[`${f.search}|${f.date}`]);
+    return {
+      name: `${i + 1}. ${money(f.priceTRY)} · ${f.search}${f.origin ? ` [${f.origin}]` : ''} · ${f.date}`,
+      value: `${f.depTime} → ${f.arrTime}${plus} · ${f.airline}\n` +
+             `${dur(f.durationMin)} · ${stopsLabel(f.stops)} · **${f.vendor || f.provider}**\n` +
+             `[Google Flights](${link}) · [Skiplagged](https://skiplagged.com/flights/${f.origin || ''}/${f.dest || ''}/${f.date})`,
+    };
+  });
+
+  // En ucuz 5 tek bir rotada yogunlasabiliyor; hicbir rota gozden kacmasin diye
+  // her arama icin tek satirlik ozet de ekliyoruz.
+  const perSearch = [];
+  for (const key of Object.keys(searchByLabelDate)) {
+    const s = searchByLabelDate[key];
+    const rows = allUniq.filter(f => f.search === s.label && f.date === s.date);
+    if (rows.length) perSearch.push(`\`${s.label.replace('IST -> ', '')} ${s.date}\` **${money(rows[0].priceTRY)}**`);
+  }
+  if (perSearch.length) {
+    fields.push({ name: '​', value: 'Tüm rotaların en ucuzu:\n' + perSearch.join('\n') });
+  }
+
+  const body = {
+    content: (cfg.mentionEveryone ? '@everyone ' : '') +
+      `✈️ En ucuz ${top.length} bilet — şu anki en düşük **${money(top[0].priceTRY)}**`,
+    allowed_mentions: { parse: cfg.mentionEveryone ? ['everyone'] : [] },
+    embeds: [{
+      title: '📋 Düzenli fiyat özeti',
+      color: 0x3498db,
+      fields,
+      footer: { text: `${tsLocal()} · her ${CONFIG.intervalMinutes} dk · Google + Skiplagged/Skyscanner` },
+      timestamp: tsISO(),
+    }],
+  };
+
+  try {
+    const res = await fetch(WEBHOOK, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!res.ok) log(`!! Özet gönderilemedi: HTTP ${res.status} ${await res.text()}`);
+    else log(`>> Discord'a özet gönderildi (en ucuz ${top.length} bilet).`);
+  } catch (e) {
+    log(`!! Özet gönderilemedi: ${e.message}`);
   }
 }
 
@@ -204,7 +290,19 @@ async function runCycle() {
     return;
   }
 
-  // --- test için: eşik altındakileri logla ---
+  // --- her turda gönderilen düzenli özet ---
+  const uniq = dedupeAcrossProviders(all);
+  const digest = CONFIG.digest || {};
+  if (digest.enabled) {
+    const top = distinctOffers(uniq).slice(0, digest.count || 5);
+    if (top.length) {
+      log(`--- en ucuz ${top.length} bilet ---`);
+      top.forEach((f, i) => log(`   ${i + 1}. ${fmtFlight(f)}`));
+      await sendDigest(top, uniq, searchByLabelDate);
+    }
+  }
+
+  // --- eşik altındakileri logla ---
   const logged = all
     .filter(f => f.priceTRY < CONFIG.logThresholdTRY)
     .sort((a, b) => a.priceTRY - b.priceTRY);
