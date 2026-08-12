@@ -1,15 +1,9 @@
 name: Bilet kontrolu
 
 on:
-  # ZAMANLAMA GECICI KAPALI.
-  # Hesaptaki odeme kilidi ("account is locked due to a billing issue")
-  # yuzunden her calisma 5 saniyede dusuyordu ve her dususte hata maili
-  # geliyordu. Billing duzelince asagidaki iki satirin basindaki # kaldirilip
-  # push edilecek; o an zamanlama yeniden baslar.
-  #
-  # schedule:
-  #   - cron: '*/20 * * * *'
-  workflow_dispatch:        # Actions sekmesinden elle calistirilabilir
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
 
 # Workflow token'ini salt-okunur yap: repo public oldugu icin
 # GITHUB_TOKEN'in yazma yetkisi olmasina gerek yok.
