@@ -159,15 +159,24 @@ function normalize(j, rate, search) {
   return out;
 }
 
-/** Tek arama. Birden fazla kalkis havalimani tanimliysa hepsi sorulur. */
+/**
+ * Tek arama. Birden fazla kalkis VE varis havalimani tanimliysa hepsi sorulur.
+ * Bangkok'un iki havalimani var (BKK ve DMK); AirAsia gibi ucuz tasiyicilar
+ * DMK'ya iniyor, sadece BKK'ya bakinca o tarifeler tamamen kaciriliyor.
+ */
 async function searchSkiplagged(session, search) {
-  const codes = search.fromCodes || [];
-  if (!codes.length) throw new Error('fromCodes tanimli degil');
+  const fromCodes = search.fromCodes || [];
+  const toCodes = search.toCodes || (search.to ? [search.to] : []);
+  if (!fromCodes.length) throw new Error('fromCodes tanimli degil');
+  if (!toCodes.length) throw new Error('toCodes tanimli degil');
+
   const all = [];
-  for (const from of codes) {
-    const j = await fetchItineraries(session.page, { from, to: search.to, date: search.date });
-    if (j) all.push(...normalize(j, session.rate, search));
-    await session.page.waitForTimeout(1500);
+  for (const from of fromCodes) {
+    for (const to of toCodes) {
+      const j = await fetchItineraries(session.page, { from, to, date: search.date });
+      if (j) all.push(...normalize(j, session.rate, search));
+      await session.page.waitForTimeout(1500);
+    }
   }
   return all;
 }

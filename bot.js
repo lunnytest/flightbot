@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { launchBrowser, scrapeSearch } = require('./scrape');
 const SL = require('./skiplagged');
+const TC = require('./tripcom');
 
 const ROOT = __dirname;
 const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
@@ -253,6 +254,12 @@ async function runCycle() {
         }
       }
 
+      if (CONFIG.useTripcom !== false) {
+        const tc = await TC.searchTripcom(browser, search);
+        if (tc.error) log(`!! ${search.label} ${search.date} — Trip.com hatası: ${tc.error}`);
+        else flights.push(...tc.flights);
+      }
+
       // Saat kısıtı olan aramalarda (5 Eylül) kalkış saatine göre ele.
       // Saati okunamayan satırı ELEMİYORUZ — ucuz bileti kaçırmaktansa işaretleyip gösteriyoruz.
       let kept = flights;
@@ -272,7 +279,7 @@ async function runCycle() {
         return s.length ? `${p} ${s.length}/${money(Math.min(...s.map(f => f.priceTRY)))}` : `${p} —`;
       };
       log(`${search.label} ${search.date}${search.minDepartureTime ? ` (${search.minDepartureTime} sonrası)` : ''}` +
-          ` — ${per('Google')}, ${per('Skiplagged')}` +
+          ` — ${per('Google')}, ${per('Skiplagged')}, ${per('Trip.com')}` +
           (cheapest ? ` | en ucuz ${money(cheapest.priceTRY)} (${cheapest.vendor || cheapest.provider})` : ''));
 
       all.push(...kept);
