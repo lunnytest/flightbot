@@ -12,6 +12,24 @@
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
+/** Bagimsiz USD->TRY kuru. Skiplagged TRY vermediginde kullanilir. */
+async function usdToTry(attempts = 3) {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 15000);
+      const res = await fetch('https://open.er-api.com/v6/latest/USD', { signal: ctl.signal });
+      clearTimeout(t);
+      const j = await res.json();
+      const r = j && j.rates && j.rates.TRY;
+      // Sacma bir deger gelirse kullanma (API bozulursa fiyatlar sapitmasin)
+      if (typeof r === 'number' && r > 5 && r < 1000) return r;
+    } catch {}
+    if (i < attempts) await new Promise(r => setTimeout(r, i * 3000));
+  }
+  return null;
+}
+
 /**
  * Tarayicida bir Skiplagged oturumu acar: Cloudflare'i asar, TL kurunu alir.
  * Acilis sayfasi ilk aramadan turetilir, sabit rota yok.
@@ -40,6 +58,8 @@ async function openSession(browser, seed) {
   await page.goto(seedUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(12000); // challenge + ilk arama
 
+  let rateSource = 'skiplagged';
+
   if (!rate) {
     // currency.php yakalanamadiysa dogrudan sor
     rate = await page.evaluate(async () => {
@@ -50,9 +70,18 @@ async function openSession(browser, seed) {
       } catch { return null; }
     });
   }
-  if (!rate) throw new Error('TL kuru alinamadi — para birimi TRY degil olabilir');
 
-  return { ctx, page, rate };
+  // Skiplagged para birimini SUNUCUNUN IP'sine gore seciyor ve degistirilemiyor
+  // (cerez de secici de ise yaramadi). ABD'deki bir runner'da TRY yerine USD
+  // secilir. Ama API fiyatlari her zaman USD cent, o yuzden bize sadece
+  // USD->TRY kuru lazim; bulamazsak disaridan aliyoruz.
+  if (!rate) {
+    rate = await usdToTry();
+    rateSource = 'open.er-api.com';
+  }
+  if (!rate) throw new Error('USD->TRY kuru hicbir kaynaktan alinamadi');
+
+  return { ctx, page, rate, rateSource };
 }
 
 async function closeSession(s) {

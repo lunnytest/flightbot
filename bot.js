@@ -143,7 +143,7 @@ async function runCycle() {
   let skip = null;
   try {
     skip = await SL.openSession(browser, CONFIG.searches[0]);
-    log(`Skiplagged oturumu açıldı (TL kuru ${skip.rate}).`);
+    log(`Skiplagged oturumu açıldı (USD→TL kuru ${skip.rate}, kaynak: ${skip.rateSource}).`);
   } catch (e) {
     log(`!! Skiplagged oturumu açılamadı: ${e.message} — sadece Google Flights kullanılacak.`);
   }
